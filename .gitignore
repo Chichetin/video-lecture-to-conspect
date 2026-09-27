@@ -1,0 +1,11 @@
+# Секреты
+.env
+
+# Материалы лекций и результаты
+lectures/
+output/
+
+# IDE / Python
+.idea/
+__pycache__/
+*.pyc
