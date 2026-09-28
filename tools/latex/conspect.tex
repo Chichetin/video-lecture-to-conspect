@@ -16,7 +16,7 @@
 \setlength{\parskip}{0.35ex plus 0.2ex}
 \linespread{1.06}
 \frenchspacing
-\emergencystretch=2em
+\emergencystretch=3em
 \clubpenalty=10000
 \widowpenalty=10000
 \displaywidowpenalty=10000
@@ -81,21 +81,35 @@
   {\tikz[baseline=(n.base)]\node[fill=accent,text=white,rounded corners=3pt,inner xsep=6pt,inner ysep=3pt,minimum width=1.6em](n){\thesection};}
   {0.6em}{}
   [\vspace{-0.6ex}{\color{accent!25}\titlerule[1pt]}]
+% running head for unnumbered sections too; \phantomsection gives the following \addcontentsline
+% (pandoc: \section*{..}\addcontentsline) its own anchor, otherwise TOC links/bookmarks of the
+% unnumbered sections point to the previous numbered heading
+\newcommand{\markunnumbered}[1]{\phantomsection\markboth{#1}{}#1}
 \titleformat{name=\section,numberless}
-  {\sffamily\Large\bfseries\color{accent}}{}{0pt}{}
+  {\sffamily\Large\bfseries\color{accent}}{}{0pt}{\markunnumbered}
   [\vspace{-0.6ex}{\color{accent!25}\titlerule[1pt]}]
 \titlespacing*{\section}{0pt}{3.2ex plus 1ex minus .5ex}{1.4ex}
 % ---------- table of contents (clickable; PDF outline comes from hyperref/bookmark) ----------
 \usepackage{titletoc}
 \setcounter{tocdepth}{2}
-\titlecontents{section}[2.4em]{\addvspace{0.55em}\sffamily\bfseries\color{accent}}
-  {\contentslabel[\thecontentslabel]{2.4em}}{\hspace*{-2.4em}}
-  {\hfill\contentspage}
-\titlecontents{subsection}[2.4em]{\addvspace{0.1em}\small}
+% video timecode + slides of a section are shown on its TOC line: \secmeta stores them in the .aux
+% (\tocmetadef{<section no>}{<timecode>}{<slides>}), the section entry reads them back.
+% section entry: number | title (wraps in its own column) | video+slides (right column) | page
+\newlength{\tocmetawidth}\setlength{\tocmetawidth}{10.6em}
+\newcommand{\tocsectitle}[1]{\parbox[t]{\dimexpr\linewidth-\tocmetawidth-6.2em\relax}{\raggedright #1}}
+\titlecontents{section}[2.4em]{\addvspace{0.2em}\sffamily\bfseries\color{accent}}
+  {\contentslabel[\thecontentslabel]{2.4em}\tocsectitle}{\hspace*{-2.4em}\tocsectitle}
+  {\hfill\parbox[t]{\tocmetawidth}{\raggedleft\leavevmode\tocmeta{\thecontentslabel}}\makebox[2em][r]{\contentspage}}
+\titlecontents{subsection}[2.4em]{\fontsize{10}{11}\selectfont}
   {}{}{\titlerule*[0.7pc]{.}\contentspage}
-\newcommand{\tocvideo}[2]{\par\nopagebreak\hspace*{2.4em}{\sffamily\footnotesize\color{muted}\playicon\ #1\quad #2}\par}
+\makeatletter
+\newcommand{\tocmetadef}[3]{\expandafter\gdef\csname tocmeta@#1\endcsname{#2\enspace #3}}
+\newcommand{\tocmeta}[1]{\ifcsname tocmeta@#1\endcsname
+  {\mdseries\footnotesize\color{muted}\playicon\ \csname tocmeta@#1\endcsname}\fi}
+\makeatother
+\newcommand{\tocvideo}[2]{} % obsolete .toc entries from older builds
 \newcommand{\tocpage}{\clearpage\pdfbookmark[1]{Оглавление}{toc}%
-  \renewcommand{\contentsname}{Оглавление}\tableofcontents\clearpage}
+  \renewcommand{\contentsname}{Оглавление}{\setlength{\parskip}{0pt}\linespread{1}\selectfont\enlargethispage{2\baselineskip}\tableofcontents}\clearpage}
 
 \titleformat{\subsection}{\sffamily\large\bfseries\color{accent!85!black}}{}{0pt}{}
 \titlespacing*{\subsection}{0pt}{2.2ex plus .8ex minus .3ex}{0.8ex}
@@ -103,11 +117,13 @@
 
 % video timecode + slides under a section title
 \newcommand{\playicon}{\tikz[baseline=-0.1ex]\fill[accent] (0,-0.05ex) -- (0,1.55ex) -- (1.25ex,0.75ex) -- cycle;}
+\makeatletter
 \newcommand{\secmeta}[2]{\par\noindent
   \tikz[baseline=(t.base)]\node[fill=accent!9,rounded corners=2.5pt,inner xsep=5pt,inner ysep=2.5pt](t)
     {\sffamily\small\playicon\ \textcolor{accent}{\bfseries #1}};%
   \hspace{0.6em}{\sffamily\small\color{muted}#2}\par\medskip
-  \addtocontents{toc}{\protect\tocvideo{#1}{#2}}}
+  \protected@write\@auxout{}{\string\tocmetadef{\thesection}{#1}{#2}}}
+\makeatother
 
 % inline labels
 \newcommand{\compnote}{{\sffamily\bfseries\color{accent2}Прим.\,составителя.}\ }
@@ -139,7 +155,9 @@
 % ---------- footnotes ----------
 \renewcommand{\footnoterule}{\vspace*{-3pt}{\color{accent!40}\hrule width 0.3\columnwidth height 0.5pt}\vspace*{2.6pt}}
 \makeatletter
-\renewcommand{\@makefntext}[1]{\noindent\hangindent=1.2em\hbox to 1.2em{\color{accent2}\sffamily\bfseries\@thefnmark\hfil}#1}
+% the mark sits in a 1.2em column; two-digit marks (10, 11, ...) get a space instead of touching the text
+\renewcommand{\@makefntext}[1]{\noindent\hangindent=1.2em\sbox0{\color{accent2}\sffamily\bfseries\@thefnmark\hspace{0.3em}}%
+  \ifdim\wd0<1.2em\hbox to 1.2em{\unhbox0\hfil}\else\box0\fi#1}
 \renewcommand{\thefootnote}{\arabic{footnote}}
 \makeatother
 
@@ -159,16 +177,21 @@
 \thispagestyle{first}
 
 % ---------- hero ----------
+% the band grows with the title (a 3-line title must not push the subtitle out of it)
+\newsavebox{\herobox}\newlength{\heroband}
+\sbox{\herobox}{\parbox[t]{16.6cm}{\raggedright
+    {\sffamily\color{white!80!accent}\large $course$\par}\vspace{0.9em}
+    {\sffamily\bfseries\color{white}\fontsize{27}{31}\selectfont\hyphenpenalty=10000 $title$\par}\vspace{0.8em}
+    {\sffamily\color{white!85!accent}\large $lecture$ · конспект$if(lecturer)$ · $lecturer$$endif$\par}}}
+\setlength{\heroband}{\dimexpr\ht\herobox+\dp\herobox+3.1cm\relax}
+\ifdim\heroband<6.4cm\setlength{\heroband}{6.4cm}\fi % 6.4cm band, 4.9cm skip: the original layout
 \begin{tikzpicture}[remember picture,overlay]
-  \fill[accent] (current page.north west) rectangle ([yshift=-6.4cm]current page.north east);
-  \fill[accent2] ([yshift=-6.4cm]current page.north west) rectangle ([yshift=-6.55cm]current page.north east);
-  \node[anchor=north west,text width=16.6cm,inner sep=0pt,align=left]
-    at ([xshift=2.2cm,yshift=-1.55cm]current page.north west)
-    {\sffamily\color{white!80!accent}\large $course$\\[0.9em]
-     \sffamily\bfseries\color{white}\fontsize{27}{31}\selectfont $title$\\[0.8em]
-     \sffamily\color{white!85!accent}\large $lecture$ · конспект$if(lecturer)$ · $lecturer$$endif$};
+  \fill[accent] (current page.north west) rectangle ([yshift=-\heroband]current page.north east);
+  \fill[accent2] ([yshift=-\heroband]current page.north west) rectangle ([yshift=-\heroband-0.15cm]current page.north east);
+  \node[anchor=north west,inner sep=0pt]
+    at ([xshift=2.2cm,yshift=-1.55cm]current page.north west) {\usebox{\herobox}};
 \end{tikzpicture}
-\vspace*{4.9cm}
+\vspace*{\dimexpr\heroband-1.5cm\relax}
 
 $if(meta-line)$
 {\noindent\sffamily\small\color{muted}$meta-line$\par}
