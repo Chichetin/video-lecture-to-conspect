@@ -12,6 +12,7 @@
 
 ```
 .claude/commands/lecture.md   # сценарий команды /lecture
+course.md                     # контекст курса и словарь терминов
 tools/asr.py                  # извлечение звука, нарезка, отправка в SpeechKit, склейка результата
 tools/latex/build.sh          # сборка PDF: summary.md → pandoc → xelatex
 tools/latex/conspect.tex      # LaTeX-шаблон конспекта
@@ -115,6 +116,6 @@ python tools/asr.py parse   W W/segments.json                     # склейк
 tools/latex/build.sh lectures/r1   # → output/r1_conspect.pdf, лог: lectures/r1/work/latex/summary.log
 ```
 
-## Замечание
+## Словарь курса
 
-В `.claude/commands/lecture.md` есть раздел с контекстом курса и словарём терминов (сейчас это «Рекомендательные системы», VK Education). Для лекций другого курса его стоит заменить: по словарю исправляются термины в расшифровке.
+`course.md` описывает курс, правильное написание терминов и типичные искажения SpeechKit. По нему исправляются термины в расшифровке, и после каждой лекции он пополняется. Сейчас это «Рекомендательные системы» (VK Education). Для лекций другого курса замените содержимое файла.
