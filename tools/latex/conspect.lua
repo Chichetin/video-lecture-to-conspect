@@ -90,7 +90,8 @@ end
 --   * \tocpage is inserted before the first numbered section (separate clickable TOC page).
 --   * Each glossary term (first cell of the table under "## Глоссарий") gets a link to its
 --     first use in the numbered sections: an explicit span [текст]{.gl key="Термин"} wins,
---     otherwise the first **bold** text whose words start with the term's word stems,
+--     otherwise the first **bold** text whose words start with the term's word stems
+--     (bold questions ending with "?" are skipped),
 --     otherwise the first paragraph containing them. A column "Впервые" with the page is added.
 
 local ulower, ulen, usub = pandoc.text.lower, pandoc.text.len, pandoc.text.sub
@@ -223,7 +224,9 @@ local function structure(doc)
   for i = first or 1, last do
     if pending() == 0 then break end
     blocks[i] = walk_block(blocks[i], { Strong = function(st)
-      local ws = words(pandoc.utils.stringify(st))
+      local s = pandoc.utils.stringify(st)
+      if s:match('%?%s*$') then return nil end  -- bold questions (Q&A boxes) are not definitions
+      local ws = words(s)
       for _, t in ipairs(terms) do
         if not t.found and matches_any_order(ws, t.keys) then
           t.found = pandoc.utils.stringify(st)
@@ -273,6 +276,9 @@ local function structure(doc)
       end
       t.row.cells[#t.row.cells + 1] = pandoc.Cell({ cell })
     end
+    -- the glossary is long and its rows are short: tighter rows than the body tables
+    blocks[gl_table_idx] = pandoc.Div({ pandoc.RawBlock('latex', '{\\renewcommand{\\arraystretch}{1.04}'),
+                                        tbl, pandoc.RawBlock('latex', '}') })
   end
 
   -- 5. TOC page before the first numbered section
