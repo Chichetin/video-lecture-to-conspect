@@ -6,12 +6,18 @@
 - **`output/<лекция>_conspect.pdf`** — конспект, по которому можно познакомиться с материалом вместо прослушивания лекции (вёрстка LaTeX);
 - **`report.md`** — отчёт: что сделано, какие были проблемы, что проверить вручную.
 
-Весь процесс ведёт Claude Code через slash-команду `/lecture` (`.claude/commands/lecture.md`). Скрипты в `tools/` — вспомогательные, их можно запускать и вручную.
+Весь процесс ведёт Claude Code через slash-команду `/lecture` (`.claude/commands/lecture.md`). Главный агент готовит слайды, расшифровку и правку терминов, а заметки, разделы конспекта, схемы и вёрстку PDF поручает субагентам из `.claude/agents/`. Скрипты в `tools/` — вспомогательные, их можно запускать и вручную.
 
 ## Структура
 
 ```
-.claude/commands/lecture.md   # сценарий команды /lecture
+.claude/commands/lecture.md   # сценарий команды /lecture (главный агент)
+.claude/agents/               # субагенты команды /lecture:
+  lecture-notes.md            #   заметки по кускам расшифровки
+  lecture-section.md          #   разделы конспекта
+  lecture-figures.md          #   схемы со слайдов
+  lecture-layout.md           #   сборка и проверка PDF
+.claude/lecture/conspect.md   # общие правила конспекта: голос, стиль, разметка, структура
 course.md                     # контекст курса и словарь терминов
 tools/asr.py                  # извлечение звука, нарезка, отправка в SpeechKit, склейка результата
 tools/latex/build.sh          # сборка PDF: summary.md → pandoc → xelatex
@@ -85,6 +91,8 @@ fc-list | grep -i "PT S"
    ```
 
    Если папку не указать, команда возьмёт единственную необработанную лекцию из `lectures/`.
+
+   Субагенты из `.claude/agents/` подхватываются при запуске Claude Code: после их правки перезапустите сессию.
 
 3. Результат:
    - `lectures/r1/transcript.txt` — расшифровка;
