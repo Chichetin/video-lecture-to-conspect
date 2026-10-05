@@ -80,6 +80,22 @@ function Table(t)
   return t
 end
 
+-- math in headings: PDF bookmarks get a readable plain-text version (C_{ij} -> Cij, \lambda -> λ)
+local greek = { alpha = 'α', beta = 'β', gamma = 'γ', delta = 'δ', lambda = 'λ', sigma = 'σ',
+                pi = 'π', mu = 'μ', theta = 'θ', Delta = 'Δ', Sigma = 'Σ', Pi = 'Π', Lambda = 'Λ' }
+local function math_plain(m)
+  local s = m:gsub('\\(%a+)', function(c) return greek[c] or '' end)
+  return (s:gsub('[_^{}%$\\]', ''):gsub('%s+', ' '))
+end
+
+-- pandoc wraps such a heading in \texorpdfstring{<latex>}{<stringify>}; stringify drops raw
+-- inlines, so the Str between them reaches the bookmark, while LaTeX shows the formula.
+function Header(el)
+  return el:walk { Math = function(m)
+    return { rawi('\\texorpdfstring{$' .. m.text .. '$}{'), pandoc.Str(math_plain(m.text)), rawi('}') }
+  end }
+end
+
 -- pandoc hardcodes \labelenumi for explicit "1." lists; default attrs let enumitem style them
 function OrderedList(el)
   el.listAttributes = pandoc.ListAttributes(el.start, 'DefaultStyle', 'DefaultDelim')
@@ -289,5 +305,5 @@ end
 
 return {
   { Pandoc = structure },
-  { Div = Div, Para = Para, Strong = Strong, Note = Note, Table = Table, OrderedList = OrderedList },
+  { Div = Div, Para = Para, Strong = Strong, Note = Note, Table = Table, OrderedList = OrderedList, Header = Header },
 }
