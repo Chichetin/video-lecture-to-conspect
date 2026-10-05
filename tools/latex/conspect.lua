@@ -5,6 +5,12 @@
 --   [^n]: Примечание составителя: …                                      -> footnote with a styled label
 --   **Акцент лектора:** / **Важный вывод:** / **Важно:**                 -> red inline label
 --   table header cells                                                   -> \tablehead{…}
+-- Lab primer (.claude/lab/primer.md, doc-kind: lab):
+--   ## Вопрос N. Формулировка                                            -> section "Формулировка", id qN
+--   > [!NOTE] / [!WARNING] / [!CAUTION] / [!TIP] (+ **Заголовок**)       -> lab*box environments
+--   **Плохо:** / **Хорошо:** paragraph + code block                      -> red / green label and code frame
+--   ```mermaid                                                           -> picture via mmdc (else stays code)
+--   *Схема: …*  (a paragraph of its own)                                 -> muted caption
 
 local function raw(s) return pandoc.RawBlock('latex', s) end
 local function rawi(s) return pandoc.RawInline('latex', s) end
@@ -37,14 +43,18 @@ function Para(el)
     if tc then
       return raw('\\secmeta{' .. tex_escape(tc) .. '}{' .. tex_escape(rest) .. '}')
     end
+    if txt:find('^Схема:') then
+      return { raw('\\begin{schemecap}'), pandoc.Plain(el.content[1].content), raw('\\end{schemecap}') }
+    end
   end
 end
 
-local labels = { ['Акцент лектора:'] = true, ['Важный вывод:'] = true, ['Важно:'] = true }
+local labels = { ['Акцент лектора:'] = 'lectmark', ['Важный вывод:'] = 'lectmark', ['Важно:'] = 'lectmark',
+                 ['Плохо:'] = 'lectmark', ['Хорошо:'] = 'goodmark' }
 
 function Strong(el)
   local s = pandoc.utils.stringify(el)
-  if labels[s] then return rawi('\\lectmark{' .. s .. '}') end
+  if labels[s] then return rawi('\\' .. labels[s] .. '{' .. s .. '}') end
 end
 
 function Note(el)
@@ -91,6 +101,17 @@ end
 -- pandoc wraps such a heading in \texorpdfstring{<latex>}{<stringify>}; stringify drops raw
 -- inlines, so the Str between them reaches the bookmark, while LaTeX shows the formula.
 function Header(el)
+  -- lab primer: "Вопрос N. …" -> numbered section "…" with id qN (the number comes from LaTeX)
+  local c = el.content
+  if #c >= 4 and c[1].t == 'Str' and c[1].text == 'Вопрос' and c[3].t == 'Str' then
+    local n = c[3].text:match('^(%d+)%.$')
+    if n then
+      local rest = pandoc.Inlines({})
+      for i = 5, #c do rest:insert(c[i]) end
+      el.content = rest
+      el.identifier = 'q' .. n
+    end
+  end
   return el:walk { Math = function(m)
     return { rawi('\\texorpdfstring{$' .. m.text .. '$}{'), pandoc.Str(math_plain(m.text)), rawi('}') }
   end }
@@ -100,6 +121,83 @@ end
 function OrderedList(el)
   el.listAttributes = pandoc.ListAttributes(el.start, 'DefaultStyle', 'DefaultDelim')
   return el
+end
+
+-- ---------- lab primer: alerts, "Плохо:/Хорошо:" code pairs, Mermaid ----------
+
+local alerts = { NOTE = { 'labnotebox', 'В твоей работе' }, WARNING = { 'labwarnbox', 'Подводный камень' },
+                 CAUTION = { 'labcautionbox', 'Расхождение с практикой' }, TIP = { 'labaskbox', 'Могут спросить' } }
+
+-- > [!TYPE]            first paragraph: Str "[!TYPE]" (SoftBreak **Title**)?
+-- > **Title**          a title on the next line or as the next paragraph; default title otherwise
+function BlockQuote(el)
+  local first = el.content[1]
+  if not (first and first.t == 'Para' and first.content[1] and first.content[1].t == 'Str') then return end
+  local kind = first.content[1].text:match('^%[!(%u+)%]$')
+  local a = kind and alerts[kind]
+  if not a then return end
+  -- rebuild instead of editing in place: the rest of the first paragraph, then the other blocks
+  local inl = pandoc.Inlines({})
+  for i = 2, #first.content do inl:insert(first.content[i]) end
+  while inl[1] and (inl[1].t == 'SoftBreak' or inl[1].t == 'Space') do inl:remove(1) end
+  local blocks = pandoc.Blocks({})
+  if #inl > 0 then blocks:insert(pandoc.Para(inl)) end
+  for i = 2, #el.content do blocks:insert(el.content[i]) end
+  first = blocks[1]
+  local title = a[2]
+  if first and first.t == 'Para' and #first.content == 1 and first.content[1].t == 'Strong' then
+    title = pandoc.utils.stringify(first.content[1])
+    blocks:remove(1)
+  end
+  local out = { raw('\\begin{' .. a[1] .. '}{' .. tex_escape(title) .. '}') }
+  for _, b in ipairs(blocks) do out[#out + 1] = b end
+  out[#out + 1] = raw('\\end{' .. a[1] .. '}')
+  return out
+end
+
+local variants = { ['Плохо:'] = 'colframe=accent2,colback=accent2!4', ['Хорошо:'] = 'colframe=accent3,colback=accent3!5' }
+
+-- a paragraph "**Плохо:**" / "**Хорошо:**" directly before a code block recolors that block's frame
+function Blocks(blocks)
+  local out = pandoc.Blocks({})
+  for i, b in ipairs(blocks) do
+    local prev = blocks[i - 1]
+    local v = prev and prev.t == 'Para' and #prev.content == 1 and prev.content[1].t == 'Strong'
+              and variants[pandoc.utils.stringify(prev.content[1])]
+    if v and b.t == 'CodeBlock' then
+      out:insert(raw('\\tcbset{codevariant/.style={' .. v .. '}}'))
+      out:insert(b)
+      out:insert(raw('\\tcbset{codevariant/.style={}}'))
+    else
+      out:insert(b)
+    end
+  end
+  return out
+end
+
+-- ```mermaid -> PDF picture rendered by mmdc (cached by content hash in $MERMAID_DIR);
+-- without mmdc or on a render error the block stays code
+local has_mmdc = os.execute('command -v mmdc >/dev/null 2>&1')
+local mermaid_dir = os.getenv('MERMAID_DIR') or 'mermaid'
+
+function CodeBlock(el)
+  if not el.classes:includes('mermaid') then return end
+  if not has_mmdc then
+    io.stderr:write('mermaid: mmdc not found, scheme left as code\n')
+    return
+  end
+  os.execute('mkdir -p "' .. mermaid_dir .. '"')
+  local base = mermaid_dir .. '/' .. pandoc.utils.sha1(el.text)
+  local pdf = base .. '.pdf'
+  if not io.open(pdf, 'r') then
+    local f = io.open(base .. '.mmd', 'w'); f:write(el.text); f:close()
+    os.execute('mmdc -q -i "' .. base .. '.mmd" -o "' .. pdf .. '" --pdfFit >"' .. base .. '.log" 2>&1')
+    if not io.open(pdf, 'r') then
+      io.stderr:write('mermaid: render failed, scheme left as code (' .. base .. '.log)\n')
+      return
+    end
+  end
+  return pandoc.Para({ pandoc.Image({}, pdf) })
 end
 
 -- ---------- document-level pass: TOC page + glossary links ----------
@@ -305,5 +403,6 @@ end
 
 return {
   { Pandoc = structure },
+  { BlockQuote = BlockQuote, Blocks = Blocks, CodeBlock = CodeBlock },
   { Div = Div, Para = Para, Strong = Strong, Note = Note, Table = Table, OrderedList = OrderedList, Header = Header },
 }

@@ -6,6 +6,8 @@
 - **`output/<лекция>_conspect.pdf`** — конспект, по которому можно познакомиться с материалом вместо прослушивания лекции (вёрстка LaTeX);
 - **`report.md`** — отчёт: что сделано, какие были проблемы, что проверить вручную.
 
+Вторая команда, `/lab`, готовит учебник по вопросам к защите лабораторной из PDF с условием и, если есть, репозитория с решением (см. «Учебник по вопросам к лабораторной»).
+
 Весь процесс ведёт Claude Code через slash-команду `/lecture` (`.claude/commands/lecture.md`). Главный агент готовит слайды, расшифровку и правку терминов, а заметки, разделы конспекта, схемы и вёрстку PDF поручает субагентам из `.claude/agents/`. Скрипты в `tools/` — вспомогательные, их можно запускать и вручную.
 
 Обработка полуторочасовой лекции тратит примерно ~50 рублей на Yandex API и ~30% 5-часового лимита Claude Code при использовании Opus 5.5 на Medium thinking.
@@ -19,13 +21,19 @@
   lecture-figures.md          #   схемы со слайдов
   lecture-layout.md           #   сборка и проверка PDF
 .claude/lecture/conspect.md   # общие правила конспекта: голос, стиль, разметка, структура
+.claude/commands/lab.md       # сценарий команды /lab (учебник по вопросам к защите лабы)
+.claude/agents/lab-section.md #   субагент: один раздел учебника
+.claude/lab/primer.md         # правила учебника: устройство раздела, разметка, схемы Mermaid
+.claude/lab/sample.md         # эталон разметки учебника
+tools/lab_check.py            # проверка учебника: все вопросы по порядку, ссылки, разметка
 course.md                     # контекст курса и словарь терминов
 tools/asr.py                  # извлечение звука, нарезка, отправка в SpeechKit, склейка результата
-tools/latex/build.sh          # сборка PDF: summary.md → pandoc → xelatex
+tools/latex/build.sh          # сборка PDF: summary.md / primer.md → pandoc → xelatex
 tools/latex/conspect.tex      # LaTeX-шаблон конспекта
 tools/latex/conspect.lua      # pandoc-фильтр разметки конспекта
 env.example                   # шаблон .env
 lectures/                     # входные материалы (в .gitignore)
+labs/                         # лабораторные: условия и учебники (в .gitignore)
 output/                       # готовые PDF (в .gitignore)
 ```
 
@@ -123,6 +131,37 @@ python tools/asr.py parse   W W/segments.json                     # склейк
 
 ```bash
 tools/latex/build.sh lectures/r1   # → output/r1_conspect.pdf, лог: lectures/r1/work/latex/summary.log
+```
+
+## Учебник по вопросам к лабораторной
+
+1. Положите PDF с условием (требования и список вопросов к защите) в отдельную папку внутри `labs/`:
+
+   ```
+   labs/db-2/
+   └── task.pdf
+   ```
+
+2. Выполните команду; ссылка на репозиторий с решением и `--pdf` — необязательны:
+
+   ```
+   /lab labs/db-2 https://github.com/user/db-lab-2 --pdf
+   ```
+
+   С репозиторием в разделах появляются блоки «В твоей работе» с цитатами кода и тем, как защищать принятые решения. Репозиторий клонируется в `labs/db-2/work/repo` только для чтения: код из него не запускается.
+
+3. Результат:
+   - `labs/db-2/primer.md` — учебник: по разделу на каждый вопрос (постановка, разбор, примеры кода, схемы Mermaid, подводные камни, дополнительные вопросы). Читается в любом просмотрщике Markdown;
+   - `labs/db-2/report.md` — расхождения условия с практикой, допущения, слабые места;
+   - с `--pdf`: `output/db-2_questions.pdf`.
+
+Для схем в PDF нужен Mermaid CLI: `npm i -g @mermaid-js/mermaid-cli`. Без него PDF собирается, но схемы в нём остаются кодом.
+
+Ручная проверка и сборка:
+
+```bash
+python tools/lab_check.py labs/db-2                        # вопросы по порядку, ссылки, разметка
+tools/latex/build.sh labs/db-2 primer.md questions         # → output/db-2_questions.pdf
 ```
 
 ## Словарь курса

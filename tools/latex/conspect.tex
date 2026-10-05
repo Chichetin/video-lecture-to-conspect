@@ -31,6 +31,7 @@
 \definecolor{accent3}{HTML}{2E7D5B}
 \definecolor{muted}{HTML}{6B7280}
 \definecolor{paper}{HTML}{F4F7FB}
+\definecolor{accent4}{HTML}{9A5B12} % lab primer: "pitfall" boxes
 
 % ---------- packages ----------
 \usepackage{amsmath,amssymb}
@@ -78,6 +79,14 @@
 \renewcommand{\arraystretch}{1.18}
 \AtBeginEnvironment{longtable}{\small}
 \newcommand{\tablehead}[1]{{\sffamily\bfseries\color{accent}#1}}
+% code blocks with a language (pandoc highlighting): long lines wrap, the block sits in a frame
+% (codeframe); "Плохо:"/"Хорошо:" pairs recolor the frame via codevariant (see conspect.lua)
+$if(highlighting-macros)$
+$highlighting-macros$
+\usepackage{fvextra}
+\RecustomVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\},breaklines,breakanywhere,fontsize=\small}
+\renewenvironment{Shaded}{\begin{codeframe}}{\end{codeframe}}
+$endif$
 
 % ---------- headings ----------
 \setcounter{secnumdepth}{1}
@@ -154,6 +163,7 @@
 % inline labels
 \newcommand{\compnote}{{\sffamily\bfseries\color{accent2}Прим.\,составителя.}\ }
 \newcommand{\lectmark}[1]{{\sffamily\bfseries\color{accent2}#1}}
+\newcommand{\goodmark}[1]{{\sffamily\bfseries\color{accent3}#1}}
 
 % ---------- lists ----------
 \setlist{itemsep=0.25ex,topsep=0.6ex,parsep=0pt}
@@ -175,6 +185,19 @@
   arc=0pt,left=9pt,right=9pt,top=5pt,bottom=6pt,
   fontupper={\small\setlength{\parskip}{0.6ex}\setlength{\parindent}{0pt}},
   title={\playicon\hspace{0.2em}\textsf{\bfseries #1}},attach title to upper,coltitle=muted,after title={\par\smallskip}}
+% lab primer: GitHub alerts (> [!NOTE] …) -> boxes, see conspect.lua
+\tcbset{labbox/.style={conspect,title={#1},attach title to upper,after title={\par\smallskip},
+  fontupper={\setlength{\parindent}{0pt}\setlength{\parskip}{0.6ex}}}}
+\newtcolorbox{labnotebox}[1]{labbox={#1},colback=accent!5,colframe=accent,coltitle=accent}
+\newtcolorbox{labwarnbox}[1]{labbox={#1},colback=accent4!6,colframe=accent4,coltitle=accent4}
+\newtcolorbox{labcautionbox}[1]{labbox={#1},colback=accent2!5,colframe=accent2,coltitle=accent2}
+\newtcolorbox{labaskbox}[1]{labbox={#1},colback=muted!6,colframe=muted!55,coltitle=muted,leftrule=2pt,
+  fontupper={\small\setlength{\parindent}{0pt}\setlength{\parskip}{0.6ex}}}
+\tcbset{codevariant/.style={}}
+\newtcolorbox{codeframe}{enhanced,breakable,colback=paper,colframe=accent!50,boxrule=0pt,leftrule=2.5pt,
+  arc=0pt,left=6pt,right=6pt,top=3pt,bottom=3pt,before skip=0.8ex,after skip=0.8ex,codevariant}
+% caption under a Mermaid scheme (*Схема: …*)
+\newenvironment{schemecap}{\par\begingroup\small\sffamily\color{muted}\centering}{\par\endgroup\medskip}
 \newtcolorbox{planbox}[1]{conspect,colback=white,colframe=accent!60,boxrule=0.4pt,leftrule=0.4pt,
   left=4pt,right=4pt,top=2pt,bottom=2pt,arc=3pt,sharp corners=false}
 
@@ -191,7 +214,7 @@
 \pagestyle{fancy}
 \fancyhf{}
 \renewcommand{\sectionmark}[1]{\markboth{#1}{}}
-\fancyhead[L]{\sffamily\footnotesize\color{muted}$lecture$}
+\fancyhead[L]{\sffamily\footnotesize\color{muted}$if(lab)$$lab$$else$$lecture$$endif$}
 \fancyhead[R]{\sffamily\footnotesize\color{muted}\parbox[b]{0.8\textwidth}{\raggedleft\nouppercase{\leftmark}}}
 \fancyfoot[C]{\sffamily\footnotesize\color{muted}\thepage}
 \renewcommand{\headrulewidth}{0.4pt}
@@ -208,7 +231,7 @@
 \sbox{\herobox}{\parbox[t]{16.6cm}{\raggedright
     {\sffamily\color{white!80!accent}\large $course$\par}\vspace{0.9em}
     {\sffamily\bfseries\color{white}\fontsize{27}{31}\selectfont\hyphenpenalty=10000 $title$\par}\vspace{0.8em}
-    {\sffamily\color{white!85!accent}\large $lecture$ · конспект$if(lecturer)$ · $lecturer$$endif$\par}}}
+    {\sffamily\color{white!85!accent}\large $if(lab)$$lab$ · вопросы к защите$else$$lecture$ · конспект$if(lecturer)$ · $lecturer$$endif$$endif$\par}}}
 \setlength{\heroband}{\dimexpr\ht\herobox+\dp\herobox+3.1cm\relax}
 \ifdim\heroband<6.4cm\setlength{\heroband}{6.4cm}\fi % 6.4cm band, 4.9cm skip: the original layout
 \begin{tikzpicture}[remember picture,overlay]
