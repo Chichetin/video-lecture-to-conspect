@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Check a lecture self-test (quiz.md) against the rules of .claude/lecture/quiz.md.
+"""Check a self-test (quiz.md) to a lecture or a lab against the rules of .claude/lecture/quiz.md.
+
+A folder with summary.md is a lecture (references «Где в конспекте: раздел N «…»» to its numbered ## sections),
+a folder with primer.md is a lab (references «Где в учебнике: вопрос N «…»» to its «## Вопрос N. …» sections).
 
 Usage:
-  python tools/quiz_check.py <lecture_dir>                    markup, types, links to summary.md sections
+  python tools/quiz_check.py <lecture_dir>                    markup, types, links to summary.md / primer.md sections
   python tools/quiz_check.py <lecture_dir> --calc             run work/quiz_calc.py and compare numeric answers
   python tools/quiz_check.py <lecture_dir> --blind            write work/quiz_blind.md (no answer keys) for the solver
   python tools/quiz_check.py <lecture_dir> --compare <file>   compare solver answers with the keys
 
-Question ids: e/m/h (level) + number, e.g. m3. Solver answer file: one line per question,
+Question ids: e/m/h (level) + number, e.g. m3. quiz_blind.md shuffles options (fixed order per question id),
+so the solver does not see the author's order. Solver answer file: one line per question,
 `e1: 2` (option numbers from quiz_blind.md), `m4: 1, 3`, `m1: 0.92`, `h5: <open answer text>`;
 text after ` # ` is a comment, lines starting with `!` are remarks (printed as is).
 Prints problems one per line; exits 1 if there are errors (warnings don't fail).
 """
+import random
 import re
 import subprocess
 import sys
@@ -22,16 +27,29 @@ TYPE_NAMES = {"single": "один вариант", "multi": "несколько 
 OPTION = re.compile(r"^- \[( |x|X)\] (.+)$")
 NUMBER = re.compile(r"^([-+]?\d+(?:\.\d+)?)\s*±\s*(\d+(?:\.\d+)?)$")
 REF = re.compile(r"(\d+)\s*«([^»]+)»")
-MARKERS = ("**Ответ:**", "**Эталон:**", "**Ключевые пункты:**", "**Разбор:**", "**Где в конспекте:**")
+WHERE = ("**Где в конспекте:**", "**Где в учебнике:**")
+FENCE = re.compile(r"^\s*(```+)\s*([\w+-]*)")
+CODE_SPAN = re.compile(r"`[^`]*`")
 
 
 def norm(s):
     return re.sub(r"\s+", " ", s.replace("ё", "е")).strip().rstrip(".").casefold()
 
 
+def is_lab(lecture):
+    return (lecture / "primer.md").exists() and not (lecture / "summary.md").exists()
+
+
 def summary_sections(lecture):
-    """Numbered ## sections of summary.md: [title, ...] in order."""
+    """Sections that «Где в …» refers to, [title, ...] in order: numbered ## sections of summary.md,
+    or «## Вопрос N. Title» of primer.md (title without «Вопрос N.» and the trailing period)."""
     out = []
+    if is_lab(lecture):
+        for line in (lecture / "primer.md").read_text(encoding="utf-8").splitlines():
+            m = re.match(r"^## Вопрос \d+\.\s*(.+?)\.?\s*$", line)
+            if m:
+                out.append(m.group(1))
+        return out
     for line in (lecture / "summary.md").read_text(encoding="utf-8").splitlines():
         m = re.match(r"^## (.+?)\s*(\{[^}]*\})?\s*$", line)
         if m and "unnumbered" not in (m.group(2) or ""):
@@ -54,8 +72,30 @@ def parse(md):
         problems.append("1: нет YAML-шапки")
 
     levels, intro, q, section = [], [], None, None
+    fence = None  # (строка начала, ```) внутри блока кода
     for i in range(start, len(lines)):
         no, line = i + 1, lines[i]
+        m = FENCE.match(line)
+        if fence or m:
+            # блок кода целиком уходит в текущую часть вопроса как есть: # и - внутри — не разметка
+            if fence and m and m.group(1) == fence[1] and not m.group(2):
+                fence = None
+            elif not fence:
+                fence = (no, m.group(1), m.group(2))
+                if q is None:
+                    problems.append(f"{no}: блок кода вне вопроса")
+                elif not m.group(2):
+                    problems.append(f"{no}: блок кода без языка (```python, ```sql, ```java…)")
+                elif m.group(2) == "mermaid":
+                    problems.append(f"{no}: схема Mermaid — в тесте их нет")
+                if q is not None and section in ("options", "points", "answer", "where"):
+                    problems.append(f"{no}: блок кода после {'вариантов' if section == 'options' else 'ответа'} — "
+                                    "код только в тексте вопроса, эталоне и разборе (в вариантах — `код` в строке)")
+            if q is not None and section in ("body", "etalon", "explain"):
+                q[section].append(line.rstrip())
+            if fence and fence[0] != no and no - fence[0] == 21:
+                problems.append(f"{fence[0]}: блок кода длиннее 20 строк — оставь то, что нужно для ответа")
+            continue
         if re.match(r"^#{1,6} ", line) and i > start and lines[i - 1].strip():
             problems.append(f"{no}: нет пустой строки перед заголовком — pandoc склеит его с абзацем")
         if line.startswith("## "):
@@ -108,9 +148,10 @@ def parse(md):
         elif s.startswith("**Разбор:**"):
             section = "explain"
             q["explain"].append(s[len("**Разбор:**"):].strip())
-        elif s.startswith("**Где в конспекте:**"):
+        elif s.startswith(WHERE):
             section = "where"
-            q["where"] = (no, s[len("**Где в конспекте:**"):].strip())
+            label = next(w for w in WHERE if s.startswith(w))
+            q["where"] = (no, s[len(label):].strip(), label)
         elif m := OPTION.match(s):
             q["options"].append((m.group(1) != " ", m.group(2).strip()))
             if section not in ("body", "options"):
@@ -126,14 +167,16 @@ def parse(md):
             elif section == "body":
                 q["body"].append(line.rstrip())
             elif section == "etalon":
-                q["etalon"].append(s)
+                q["etalon"].append(line.rstrip())
             elif section == "explain":
-                q["explain"].append(s)
+                q["explain"].append(line.rstrip())
             elif section == "points":
                 problems.append(f"{no}: в «Ключевых пунктах» только список «- …»")
             elif section in ("answer", "options"):
                 problems.append(f"{no}: текст после {'ответа' if section == 'answer' else 'вариантов'} без маркера "
                                 "(«Разбор:», «Эталон:»…)")
+    if fence:
+        problems.append(f"{fence[0]}: блок кода не закрыт")
     return meta, intro, levels, problems
 
 
@@ -151,15 +194,29 @@ def classify(q):
 def check(lecture, md):
     meta, intro, levels, problems = parse(md)
     warnings = []
+    lab = is_lab(lecture)
+    where_label = WHERE[1] if lab else WHERE[0]
+    src_name, unit = ("primer.md", "вопрос") if lab else ("summary.md", "раздел")
     if not any(re.match(r"^doc-kind:\s*\"?quiz\"?\s*$", m) for m in meta):
         problems.append("YAML: нет doc-kind: quiz")
-    for key in ("title", "lecture", "course"):
+    for key in ("title", "lab" if lab else "lecture", "course"):
         if not any(m.startswith(f"{key}:") for m in meta):
             problems.append(f"YAML: нет поля {key}")
     if not any(s.strip() for s in intro):
         problems.append("нет вступления перед первым уровнем")
 
+    in_code = None
     for i, line in enumerate(md.splitlines(), 1):
+        m = FENCE.match(line)
+        if in_code or m:
+            if in_code and m and m.group(1) == in_code and not m.group(2):
+                in_code = None
+            elif not in_code:
+                in_code = m.group(1)
+            continue
+        if line.startswith("> [!"):
+            problems.append(f"{i}: плашка {line.split()[1]} — в тесте их нет")
+        line = CODE_SPAN.sub("``", line)  # код в строке: <T>, {…} и [^…] в нём — не разметка
         if line.startswith(":::"):
             problems.append(f"{i}: fenced div (:::) — в тесте не используется")
         if re.search(r"\{[#.][^}]*\}", line) and not line.lstrip().startswith("$"):
@@ -170,15 +227,15 @@ def check(lecture, md):
             problems.append(f"{i}: HTML-тег")
         if re.search(r"\[\^[^\]]+\]", line):
             problems.append(f"{i}: сноска — в тесте их нет")
-        if "```" in line:
-            problems.append(f"{i}: блок кода — в тесте их нет")
 
     titles = [l["title"] for l in levels]
     if titles != [t for t, _ in LEVELS]:
         problems.append(f"уровни {titles} — нужны ровно {[t for t, _ in LEVELS]} в этом порядке")
 
     sections = summary_sections(lecture)
-    content = {n for n, t in enumerate(sections, 1) if "организац" not in t.casefold()}
+    if not sections:
+        problems.append(f"в {src_name} не найдено разделов, на которые ссылаться")
+    content = {n for n, t in enumerate(sections, 1) if lab or "организац" not in t.casefold()}
     covered = {"e": set(), "m": set(), "h": set()}
     seen_bodies = {}
     for level in levels:
@@ -224,21 +281,28 @@ def check(lecture, md):
                     problems.append(f"{where}: пустой эталон")
                 if not 2 <= len(q["points"]) <= 5:
                     problems.append(f"{where}: ключевых пунктов {len(q['points'])} — нужно 2–5")
+            if q["options"] and re.search(r"\b(перв|втор|трет|четв[её]рт|пят|последн)[а-я]* вариант|вариант[а-я]* \d",
+                                          " ".join(q["explain"]), re.I):
+                problems.append(f"{where}: разбор называет вариант по номеру — на сайте порядок случайный, "
+                                "называй по содержанию")
             if q["type"] in ("single", "multi", "num") and not " ".join(q["explain"]).strip():
                 problems.append(f"{where}: нет разбора")
             if not q["where"]:
-                problems.append(f"{where}: нет «Где в конспекте»")
+                problems.append(f"{where}: нет «{where_label.strip('*')[:-1]}»")
             else:
-                no, text = q["where"]
+                no, text, label = q["where"]
+                if label != where_label:
+                    problems.append(f"{no}: {q['id']}: метка {label} — в тесте к {'лабораторной' if lab else 'лекции'} "
+                                    f"{where_label}")
                 refs = REF.findall(text)
                 if not refs:
-                    problems.append(f"{no}: {q['id']}: «Где в конспекте» не вида «раздел N «Название»»")
+                    problems.append(f"{no}: {q['id']}: {label} не вида «{unit} N «Название»»")
                 for n, title in refs:
                     n = int(n)
                     if not 1 <= n <= len(sections):
-                        problems.append(f"{no}: {q['id']}: раздела {n} нет в summary.md (их {len(sections)})")
+                        problems.append(f"{no}: {q['id']}: {unit}а {n} нет в {src_name} (их {len(sections)})")
                     elif norm(title) != norm(sections[n - 1]):
-                        problems.append(f"{no}: {q['id']}: раздел {n} называется «{sections[n - 1]}», а не «{title}»")
+                        problems.append(f"{no}: {q['id']}: {unit} {n} называется «{sections[n - 1]}», а не «{title}»")
                     else:
                         covered.setdefault(prefix, set()).add(n)
 
@@ -247,26 +311,35 @@ def check(lecture, md):
         if prefix == "e":
             if count("num", "open"):
                 problems.append(f"{level['line']}: на лёгком уровне только вопросы с выбором")
-        if prefix in ("e", "m") and content and not len(content) <= len(qs) <= 2 * len(content):
-            warnings.append(f"«{level['title']}»: {len(qs)} вопросов при {len(content)} содержательных разделах "
-                            f"(ориентир {len(content)}–{2 * len(content)})")
+        lo, hi = (round(0.75 * len(content)), round(1.5 * len(content))) if lab else (len(content), 2 * len(content))
+        if prefix in ("e", "m") and content and not lo <= len(qs) <= hi:
+            warnings.append(f"«{level['title']}»: {len(qs)} вопросов при {len(content)} "
+                            f"{'вопросах к защите' if lab else 'содержательных разделах'} (ориентир {lo}–{hi})")
         if prefix == "m":
             if not 1 <= count("open") <= 2:
                 warnings.append(f"«{level['title']}»: открытых вопросов {count('open')} (ориентир 1–2)")
             if count("num") > 3:
                 warnings.append(f"«{level['title']}»: числовых вопросов {count('num')} (ориентир 2–3)")
         if prefix == "h":
-            if not 8 <= len(qs) <= 10:
-                warnings.append(f"«{level['title']}»: {len(qs)} вопросов (ориентир 8–10)")
-            if qs and not 0.2 <= count("open") / len(qs) <= 0.5:
-                warnings.append(f"«{level['title']}»: открытых {count('open')} из {len(qs)} (ориентир ~⅓)")
+            lo, hi = (10, 12) if lab else (8, 10)
+            if not lo <= len(qs) <= hi:
+                warnings.append(f"«{level['title']}»: {len(qs)} вопросов (ориентир {lo}–{hi})")
+            lo, hi, aim = (0.35, 0.65, "~½") if lab else (0.2, 0.5, "~⅓")
+            if qs and not lo <= count("open") / len(qs) <= hi:
+                warnings.append(f"«{level['title']}»: открытых {count('open')} из {len(qs)} (ориентир {aim})")
             multi_ref = sum(len(REF.findall(q["where"][1])) >= 2 for q in qs if q["where"])
             if multi_ref < 3:
                 warnings.append(f"«{level['title']}»: вопросов на несколько разделов {multi_ref} (нужно ≥ 3)")
 
+    choice = [q for q in questions(levels) if q["options"]]
+    first = sum(q["options"][0][0] for q in choice)
+    if len(choice) >= 6 and first > 0.5 * len(choice):
+        warnings.append(f"верный вариант стоит первым в {first} из {len(choice)} вопросов с выбором — "
+                        "расставь верные варианты на разные позиции")
     missing = sorted(content - covered["e"] - covered["m"])
     if missing:
-        warnings.append("разделы без вопросов на лёгком и среднем уровне: " + ", ".join(map(str, missing)))
+        warnings.append(f"{'вопросы к защите' if lab else 'разделы'} без вопросов на лёгком и среднем уровне: "
+                        + ", ".join(map(str, missing)))
     return levels, problems, warnings
 
 
@@ -274,10 +347,18 @@ def questions(levels):
     return [q for level in levels for q in level["questions"] if "id" in q]
 
 
+def blind_order(q):
+    """Порядок вариантов в quiz_blind.md: индексы вариантов quiz.md, перемешанные с зерном — id вопроса."""
+    order = list(range(len(q["options"])))
+    random.Random(q["id"]).shuffle(order)
+    return order
+
+
 def run_calc(lecture, levels):
     script = lecture / "work" / "quiz_calc.py"
     if not script.exists():
-        return [f"нет {script}"]
+        has_num = any(q["type"] == "num" for q in questions(levels))
+        return [f"нет {script}"] if has_num else []
     res = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=60)
     if res.returncode:
         return [f"quiz_calc.py упал: {res.stderr.strip()[-400:]}"]
@@ -313,8 +394,8 @@ def write_blind(lecture, levels):
                 continue
             out += [f"### {q['id']} — {TYPE_NAMES.get(q['type'], '?')}", ""]
             out += q["body"] + [""]
-            for k, (_, text) in enumerate(q["options"], 1):
-                out.append(f"{k}. {text}")
+            for k, i in enumerate(blind_order(q), 1):
+                out.append(f"{k}. {q['options'][i][1]}")
             if q["options"]:
                 out.append("")
     path = lecture / "work" / "quiz_blind.md"
@@ -342,7 +423,7 @@ def compare(levels, answers_path):
         note = f" — {note}" if note else ""
         if q["type"] in ("single", "multi"):
             chosen = {int(x) for x in re.findall(r"\d+", value)}
-            correct = {k for k, (c, _) in enumerate(q["options"], 1) if c}
+            correct = {k for k, i in enumerate(blind_order(q), 1) if q["options"][i][0]}
             if chosen == correct:
                 agree += 1
             else:
