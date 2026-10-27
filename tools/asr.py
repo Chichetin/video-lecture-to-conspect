@@ -11,6 +11,7 @@ All state lives in W/parts.json; submit/poll are idempotent (already submitted o
 downloaded parts are skipped). Secrets are read from environment or from .env.
 """
 import base64
+import difflib
 import json
 import os
 import re
@@ -244,6 +245,33 @@ def iter_objects(text):
         yield obj
 
 
+def split_sentences(t, words, s, e):
+    """Long utterances (minutes of speech) -> sentences with real word times.
+
+    Normalized text differs from recognized words in numbers ("двадцать шесть" -> "26"),
+    so tokens are matched onto words with difflib; unmatched tokens borrow neighbours' times.
+    """
+    toks = t.split()
+    if not words:
+        return [{"start_ms": s, "end_ms": e, "text": t}]
+    key = lambda x: re.sub(r"\W", "", x.lower().replace("ё", "е"))
+    sm = difflib.SequenceMatcher(None, [key(x) for x in toks],
+                                 [key(w.get("text", "")) for w in words], autojunk=False)
+    tw = {}
+    for a, b, n in sm.get_matching_blocks():
+        for k in range(n):
+            tw[a + k] = words[b + k]
+    out, i0 = [], 0
+    for i, tok in enumerate(toks):
+        if tok[-1] in ".?!" or i == len(toks) - 1:
+            span = [tw[k] for k in range(i0, i + 1) if k in tw]
+            st = int(span[0].get("startTimeMs", s)) if span else (out[-1]["end_ms"] if out else s)
+            en = int(span[-1].get("endTimeMs", e)) if span else st
+            out.append({"start_ms": st, "end_ms": en, "text": " ".join(toks[i0:i + 1])})
+            i0 = i + 1
+    return out
+
+
 def parse_raw(text):
     """Segments (relative to part start) from a getRecognition response stream."""
     finals, refs = [], []
@@ -270,7 +298,7 @@ def parse_raw(text):
         if (s, t) in seen:
             continue
         seen.add((s, t))
-        segs.append({"start_ms": s, "end_ms": e, "text": t})
+        segs.extend(split_sentences(t, words, s, e))
     segs.sort(key=lambda x: x["start_ms"])
     return segs, ("finalRefinement" if refs else "final")
 
