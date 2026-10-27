@@ -35,6 +35,9 @@
 
 % ---------- packages ----------
 \usepackage{amsmath,amssymb}
+% amssymb has no blackboard digits: \mathbb{1} (indicator) is drawn as a double-struck one
+\let\amsmathbb\mathbb
+\renewcommand{\mathbb}[1]{\ifnum\strcmp{#1}{1}=0 \mathrm{1\mkern-4mu l}\else\amsmathbb{#1}\fi}
 \usepackage{tikz}
 \usepackage[most]{tcolorbox}
 \usepackage{titlesec}
@@ -50,10 +53,16 @@
 \captionsetup{textfont=muted}
 \usepackage{etoolbox}
 \usepackage{newunicodechar}
-\newunicodechar{→}{\ensuremath{\rightarrow}}
-\newunicodechar{←}{\ensuremath{\leftarrow}}
-\newunicodechar{×}{\ensuremath{\times}}
-\usepackage[hidelinks=false]{hyperref}
+% second argument of \texorpdfstring keeps the character itself in PDF bookmarks
+\newunicodechar{→}{\texorpdfstring{\ensuremath{\rightarrow}}{→}}
+\newunicodechar{←}{\texorpdfstring{\ensuremath{\leftarrow}}{←}}
+\newunicodechar{×}{\texorpdfstring{\ensuremath{\times}}{×}}
+\newunicodechar{Σ}{\texorpdfstring{\ensuremath{\Sigma}}{Σ}}
+\newunicodechar{α}{\texorpdfstring{\ensuremath{\alpha}}{α}}
+\newunicodechar{β}{\texorpdfstring{\ensuremath{\beta}}{β}}
+\newunicodechar{λ}{\texorpdfstring{\ensuremath{\lambda}}{λ}}
+\newunicodechar{ᵀ}{\texorpdfstring{\ensuremath{^{\mathsf{T}}}}{ᵀ}}
+\usepackage{hyperref}
 \hypersetup{colorlinks=true,linkcolor=accent,urlcolor=accent,linktoc=all,
   bookmarksopen=true,bookmarksopenlevel=1,bookmarksnumbered=true,pdfpagemode=UseOutlines,
   pdftitle={$title$},pdfauthor={$lecturer$},pdfsubject={$course$}}
@@ -119,6 +128,23 @@ $endif$
   {\contentslabel[\thecontentslabel]{2.4em}\tocsectitle}{\hspace*{-2.4em}\tocsectitle}
   {\hfill\parbox[t]{\tocmetawidth}{\raggedleft\leavevmode\tocmeta{\thecontentslabel}}\makebox[2em][r]{\contentspage}}
   [\addvspace{1.5pt}]
+% last-resort subsection format for an overfull TOC (see \tocpage): subsections run in one
+% paragraph per section, "title page · title page · …", still clickable. After \begin{document}
+% \titlecontents only writes a format change into the .toc (applied on the next pass, which makes
+% the one-page check oscillate), so both formats are defined here and \tocrunin switches them.
+\titlecontents*{subsection}[2.4em]{\tocsubfont\rightskip=0pt plus 4em}
+  {}{}{\nobreak\enspace\textcolor{muted}{\thecontentspage}}[\enspace\textperiodcentered\enspace][\tocrunend]
+\makeatletter
+\let\tocrunin@l\l@subsection
+\expandafter\let\expandafter\tocrunin@b\csname ttlb@subsection\endcsname
+\expandafter\let\expandafter\tocrunin@m\csname ttlm@subsection\endcsname
+\expandafter\let\expandafter\tocrunin@e\csname ttle@subsection\endcsname
+\newcommand{\tocrunin}{\let\l@subsection\tocrunin@l
+  \expandafter\let\csname ttlb@subsection\endcsname\tocrunin@b
+  \expandafter\let\csname ttlm@subsection\endcsname\tocrunin@m
+  \expandafter\let\csname ttle@subsection\endcsname\tocrunin@e}
+\makeatother
+\newcommand{\tocrunend}{\par\addvspace{2pt}}% \par is not allowed in \titlecontents* args
 \titlecontents{subsection}[2.4em]{\tocsubfont}
   {}{}{\titlerule*[0.7pc]{.}\contentspage}
 \makeatletter
@@ -129,20 +155,23 @@ $endif$
 \newcommand{\tocvideo}[2]{} % obsolete .toc entries from older builds
 % The TOC must stay on one page: typeset the .toc (from the previous pass) into a box and,
 % while it is taller than the page, switch to denser settings. The box comes out ~30pt taller
-% than the typeset TOC, and \enlargethispage gives 2 more lines: \textheight+1 line leaves a margin
-% for the heading (calibrated on lectures/r2).
+% than the typeset TOC, and \enlargethispage gives 2 more lines; the threshold is \textheight
+% (\textheight+1 line was calibrated on lectures/r2, but a 729.99pt box still overflowed by one
+% line on lectures/r_seminar_1, where long section meta wraps to several lines).
 \newsavebox{\tocmeasurebox}
 \makeatletter
 \newcommand{\tocmeasure}{\IfFileExists{\jobname.toc}{\sbox{\tocmeasurebox}{\vbox{\hsize\textwidth
   \setlength{\parskip}{0pt}\makeatletter\@input{\jobname.toc}}}}{\sbox{\tocmeasurebox}{}}}
 \makeatother
-\newcommand{\toctoobig}{\dimexpr\ht\tocmeasurebox+\dp\tocmeasurebox\relax>\dimexpr\textheight+\baselineskip\relax}
+\newcommand{\toctoobig}{\dimexpr\ht\tocmeasurebox+\dp\tocmeasurebox\relax>\textheight}
 \newcommand{\tocpage}{\clearpage\pdfbookmark[1]{Оглавление}{toc}%
   \renewcommand{\contentsname}{Оглавление}{\setlength{\parskip}{0pt}\linespread{1}\selectfont
   \tocmeasure
   \ifdim\toctoobig\renewcommand{\tocsecskip}{0.05em}\renewcommand{\tocsubfont}{\fontsize{9.5}{10.3}\selectfont}\tocmeasure\fi
   \ifdim\toctoobig\renewcommand{\tocsecskip}{0pt}\renewcommand{\tocsubfont}{\fontsize{9}{9.6}\selectfont}\tocmeasure\fi
-  \ifdim\toctoobig\renewcommand{\tocsubfont}{\fontsize{8.5}{9}\selectfont}\fi
+  \ifdim\toctoobig\renewcommand{\tocsubfont}{\fontsize{8.5}{9}\selectfont}\tocmeasure\fi
+  % last resort (many subsections, e.g. lectures/p3 with 68): run-in subsections
+  \ifdim\toctoobig\renewcommand{\tocsubfont}{\fontsize{9.5}{11.2}\selectfont}\tocrunin\fi
   \enlargethispage{2\baselineskip}\tableofcontents}\clearpage}
 
 \titleformat{\subsection}{\sffamily\large\bfseries\color{accent!85!black}}{}{0pt}{}
@@ -185,6 +214,12 @@ $endif$
   arc=0pt,left=9pt,right=9pt,top=5pt,bottom=6pt,
   fontupper={\small\setlength{\parskip}{0.6ex}\setlength{\parindent}{0pt}},
   title={\playicon\hspace{0.2em}\textsf{\bfseries #1}},attach title to upper,coltitle=muted,after title={\par\smallskip}}
+% breakable boxes with the title attached to the text: don't leave the title alone at the page bottom
+\BeforeBeginEnvironment{qabox}{\Needspace{5\baselineskip}}
+\BeforeBeginEnvironment{labnotebox}{\Needspace{4\baselineskip}}
+\BeforeBeginEnvironment{labwarnbox}{\Needspace{4\baselineskip}}
+\BeforeBeginEnvironment{labcautionbox}{\Needspace{4\baselineskip}}
+\BeforeBeginEnvironment{labaskbox}{\Needspace{4\baselineskip}}
 % lab primer: GitHub alerts (> [!NOTE] …) -> boxes, see conspect.lua
 \tcbset{labbox/.style={conspect,title={#1},attach title to upper,after title={\par\smallskip},
   fontupper={\setlength{\parindent}{0pt}\setlength{\parskip}{0.6ex}}}}

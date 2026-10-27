@@ -1,7 +1,7 @@
 -- Pandoc Lua filter for tools/latex/conspect.tex.
 -- Markdown conventions it understands (see .claude/commands/lecture.md, step 6–7):
 --   ::: {.abstract title="…"} / ::: keypoints / ::: emphasis / ::: watch / ::: {.qa title="…"} -> tcolorbox environments
---   *Таймкод: ЧЧ:ММ:СС · слайды …*  (a paragraph of its own)            -> \secmeta badge
+--   *Таймкод: ЧЧ:ММ:СС · слайды …* or *Таймкод: ЧЧ:ММ:СС* (own paragraph) -> \secmeta badge
 --   [^n]: Примечание составителя: …                                      -> footnote with a styled label
 --   **Акцент лектора:** / **Важный вывод:** / **Важно:**                 -> red inline label
 --   table header cells                                                   -> \tablehead{…}
@@ -40,6 +40,10 @@ function Para(el)
   if #el.content == 1 and el.content[1].t == 'Emph' then
     local txt = pandoc.utils.stringify(el.content[1])
     local tc, rest = txt:match('^Таймкод:%s*([%d:–%-]+)%s*·%s*(.*)$')
+    if not tc then  -- a section without slides: just the timecode
+      tc = txt:match('^Таймкод:%s*([%d:–%-]*%d)%s*$')
+      rest = ''
+    end
     if tc then
       return raw('\\secmeta{' .. tex_escape(tc) .. '}{' .. tex_escape(rest) .. '}')
     end
@@ -92,7 +96,9 @@ end
 
 -- math in headings: PDF bookmarks get a readable plain-text version (C_{ij} -> Cij, \lambda -> λ)
 local greek = { alpha = 'α', beta = 'β', gamma = 'γ', delta = 'δ', lambda = 'λ', sigma = 'σ',
-                pi = 'π', mu = 'μ', theta = 'θ', Delta = 'Δ', Sigma = 'Σ', Pi = 'Π', Lambda = 'Λ' }
+                pi = 'π', mu = 'μ', theta = 'θ', Delta = 'Δ', Sigma = 'Σ', Pi = 'Π', Lambda = 'Λ',
+                approx = ' ≈ ', top = 'ᵀ', times = '×', le = ' ≤ ', ge = ' ≥ ', ['in'] = ' ∈ ',
+                subseteq = ' ⊆ ', cdot = '·', to = ' → ' }
 local function math_plain(m)
   local s = m:gsub('\\(%a+)', function(c) return greek[c] or '' end)
   return (s:gsub('[_^{}%$\\]', ''):gsub('%s+', ' '))
@@ -205,7 +211,7 @@ end
 --   * Each glossary term (first cell of the table under "## Глоссарий") gets a link to its
 --     first use in the numbered sections: an explicit span [текст]{.gl key="Термин"} wins,
 --     otherwise the first **bold** text whose words start with the term's word stems
---     (bold questions ending with "?" are skipped),
+--     (bold inside ::: qa boxes and bold questions ending with "?" are skipped),
 --     otherwise the first paragraph containing them. A column "Впервые" with the page is added.
 
 local ulower, ulen, usub = pandoc.text.lower, pandoc.text.len, pandoc.text.sub
@@ -317,13 +323,20 @@ local function structure(doc)
   end
   last = last or #blocks
 
+  -- anchor of a glossary term: \leavevmode keeps the label in the paragraph (pandoc's
+  -- \phantomsection\label for a Span id at the start of a paragraph stays in vertical mode and
+  -- gets the previous page if the paragraph starts a new page)
+  local function gl_anchor(id)
+    return pandoc.RawInline('latex', '\\leavevmode\\phantomsection\\label{' .. id .. '}')
+  end
   -- 3a. explicit spans
   for i = first or 1, last do
     blocks[i] = walk_block(blocks[i], { Span = function(sp)
       if sp.classes:includes('gl') and sp.attributes.key then
         local t = by_name[ulower(sp.attributes.key)]
         if t and not t.found then
-          t.found = 'явно'; sp.identifier = t.id; sp.classes = {}; sp.attributes = {}
+          t.found = 'явно'; sp.classes = {}; sp.attributes = {}
+          sp.content:insert(1, gl_anchor(t.id))
           return sp
         end
       end
@@ -337,14 +350,17 @@ local function structure(doc)
   end
   for i = first or 1, last do
     if pending() == 0 then break end
-    blocks[i] = walk_block(blocks[i], { Strong = function(st)
+    blocks[i] = walk_block(blocks[i], {
+     -- bold questions in Q&A boxes are not definitions (they may go on after "?": "**Вопрос? Пояснение.**")
+     Div = function(d) if d.classes:includes('qa') then return d, false end end,
+     Strong = function(st)
       local s = pandoc.utils.stringify(st)
-      if s:match('%?%s*$') then return nil end  -- bold questions (Q&A boxes) are not definitions
+      if s:match('%?%s*$') then return nil end  -- bold questions outside Q&A boxes are not definitions either
       local ws = words(s)
       for _, t in ipairs(terms) do
         if not t.found and matches_any_order(ws, t.keys) then
           t.found = pandoc.utils.stringify(st)
-          return pandoc.Span({ st }, pandoc.Attr(t.id)), false
+          return pandoc.Span({ gl_anchor(t.id), st }), false
         end
       end
     end })
@@ -358,7 +374,7 @@ local function structure(doc)
       for _, t in ipairs(terms) do
         if not t.found and matches(ws, t.keys) then
           t.found = '(абзац) ' .. usub(txt, 1, 50)
-          anchors[#anchors + 1] = pandoc.Span({}, pandoc.Attr(t.id))
+          anchors[#anchors + 1] = gl_anchor(t.id)
         end
       end
       if #anchors > 0 then

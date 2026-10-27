@@ -12,8 +12,11 @@ Usage:
 
 Question ids: e/m/h (level) + number, e.g. m3. quiz_blind.md shuffles options (fixed order per question id),
 so the solver does not see the author's order. Solver answer file: one line per question,
-`e1: 2` (option numbers from quiz_blind.md), `m4: 1, 3`, `m1: 0.92`, `h5: <open answer text>`;
+`e1: 2` (option numbers from quiz_blind.md), `m4: 1, 3`, `m1: 0.375`;
 text after ` # ` is a comment, lines starting with `!` are remarks (printed as is).
+Numeric answers must be integers or finite decimals with at most 3 digits after the point (2.5, 0.375):
+the task is meant for mental math or a basic calculator. Open questions (Эталон / Ключевые пункты) are
+still parsed so old quizzes can be checked, but are reported as problems: they are replaced by multiple choice.
 Prints problems one per line; exits 1 if there are errors (warnings don't fail).
 """
 import random
@@ -277,6 +280,7 @@ def check(lecture, md):
                     if re.search(r"все (перечисленн|вышеперечисл)|ничего из перечисл|оба варианта", t, re.I):
                         problems.append(f"{where}: вариант «{t[:40]}» не работает при перемешивании")
             if q["type"] == "open":
+                problems.append(f"{where}: открытый вопрос — замени на множественный выбор «какие доводы верны»")
                 if not " ".join(q["etalon"]).strip():
                     problems.append(f"{where}: пустой эталон")
                 if not 2 <= len(q["points"]) <= 5:
@@ -285,6 +289,11 @@ def check(lecture, md):
                                           " ".join(q["explain"]), re.I):
                 problems.append(f"{where}: разбор называет вариант по номеру — на сайте порядок случайный, "
                                 "называй по содержанию")
+            if q["type"] == "num":
+                if re.search(r"округл", " ".join(q["body"]), re.I):
+                    problems.append(f"{where}: «округлите» в вопросе — ответ должен быть точным, без округления")
+                if isinstance(q["answer"], float) and not is_round(q["answer"]):
+                    problems.append(f"{where}: ответ {q['answer']:g} — не целое и не дробь до 3 знаков после точки")
             if q["type"] in ("single", "multi", "num") and not " ".join(q["explain"]).strip():
                 problems.append(f"{where}: нет разбора")
             if not q["where"]:
@@ -316,17 +325,12 @@ def check(lecture, md):
             warnings.append(f"«{level['title']}»: {len(qs)} вопросов при {len(content)} "
                             f"{'вопросах к защите' if lab else 'содержательных разделах'} (ориентир {lo}–{hi})")
         if prefix == "m":
-            if not 1 <= count("open") <= 2:
-                warnings.append(f"«{level['title']}»: открытых вопросов {count('open')} (ориентир 1–2)")
             if count("num") > 3:
                 warnings.append(f"«{level['title']}»: числовых вопросов {count('num')} (ориентир 2–3)")
         if prefix == "h":
             lo, hi = (10, 12) if lab else (8, 10)
             if not lo <= len(qs) <= hi:
                 warnings.append(f"«{level['title']}»: {len(qs)} вопросов (ориентир {lo}–{hi})")
-            lo, hi, aim = (0.35, 0.65, "~½") if lab else (0.2, 0.5, "~⅓")
-            if qs and not lo <= count("open") / len(qs) <= hi:
-                warnings.append(f"«{level['title']}»: открытых {count('open')} из {len(qs)} (ориентир {aim})")
             multi_ref = sum(len(REF.findall(q["where"][1])) >= 2 for q in qs if q["where"])
             if multi_ref < 3:
                 warnings.append(f"«{level['title']}»: вопросов на несколько разделов {multi_ref} (нужно ≥ 3)")
@@ -341,6 +345,11 @@ def check(lecture, md):
         warnings.append(f"{'вопросы к защите' if lab else 'разделы'} без вопросов на лёгком и среднем уровне: "
                         + ", ".join(map(str, missing)))
     return levels, problems, warnings
+
+
+def is_round(v):
+    """Целое или конечная десятичная дробь до 3 знаков после точки (с запасом на погрешность float)."""
+    return abs(v * 1000 - round(v * 1000)) < 1e-6
 
 
 def questions(levels):
@@ -375,6 +384,9 @@ def run_calc(lecture, levels):
                 problems.append(f"{q['id']}: нет строки в выводе quiz_calc.py")
             elif abs(got[q["id"]] - q["answer"]) > q["tol"]:
                 problems.append(f"{q['id']}: в тесте {q['answer']} ± {q['tol']}, скрипт даёт {got[q['id']]:.6g}")
+            elif not is_round(got[q["id"]]):
+                problems.append(f"{q['id']}: скрипт даёт {got[q['id']]:.10g} — не целое и не дробь до 3 знаков: "
+                                "подбери данные так, чтобы считалось на калькуляторе без округлений")
     for qid, v in got.items():
         if qid not in by_id:
             problems.append(f"{qid}: в тесте нет такого вопроса (скрипт печатает {v:.6g})")
@@ -386,7 +398,7 @@ def run_calc(lecture, levels):
 
 def write_blind(lecture, levels):
     out = ["# Тест без ответов", "",
-           "Ответы — в отдельный файл, по строке на вопрос: `e1: 2`, `m4: 1, 3`, `m1: 0.92`, `h5: текст ответа`.", ""]
+           "Ответы — в отдельный файл, по строке на вопрос: `e1: 2`, `m4: 1, 3`, `m1: 0.375`.", ""]
     for level in levels:
         out += [f"## {level['title']}", ""]
         for q in level["questions"]:

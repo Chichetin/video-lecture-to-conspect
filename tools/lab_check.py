@@ -56,6 +56,8 @@ def main():
             problems.append(f"{i}: fenced div (:::) — используй GitHub alerts")
         if re.match(r"^#{1,6} .*\{[#.]", line):
             problems.append(f"{i}: атрибуты у заголовка — их ставит фильтр")
+        if re.match(r"^#{1,6} ", line) and i > 1 and lines[i - 2].strip():
+            problems.append(f"{i}: нет пустой строки перед заголовком — pandoc склеит его с предыдущим абзацем")
         m = re.match(r"^>\s*\[!(\w+)\]", line)
         if m and m.group(1) not in ALERTS:
             problems.append(f"{i}: неизвестный тип плашки [!{m.group(1)}]")
